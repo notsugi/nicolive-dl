@@ -80,6 +80,40 @@ class NicoLiveDL:
             raise SelectException("Not Found #embedded-data")
         embedded_data = embedded_tag.get_attribute_list("data-props")[0]
         decoded_data = json.loads(unquote(embedded_data))
+        await self.availability_check(decoded_data)
         web_socket_url = decoded_data["site"]["relive"]["webSocketUrl"]
         title = decoded_data["program"]["title"]
         return NicoLiveInfo(lvid, title, web_socket_url)
+
+    async def availability_check(self, decoded_data):
+        '''
+        視聴可能性のチェック
+        '''
+        lvid = decoded_data['program']['nicoliveProgramId']
+        if decoded_data['userProgramWatch']['canWatch'] == False:
+            raise LiveUnavailableException('Live {} is unavailable. Reason: {}'.format(lvid, decoded_data['userProgramWatch']['rejectedReasons']))
+        if decoded_data['user']['isTrialWatchTarget'] == True:
+            tiralWatchInfo = await self.get_tiralWatch_info(lvid)
+            if tiralWatchInfo['availability'] == 'no':
+                raise LiveUnavailableException('Live {} is unavailable. Reason: {}'.format(lvid, 'payment needed'))
+            elif tiralWatchInfo['availability'] == 'partial':
+                print('\033[31m'+f'[*] Live {lvid} has trial watch part. Download may be incomplete on your account'+'\033[0m')
+    
+    async def get_tiralWatch_info(self, lvid):
+        '''
+        チラ見せの設定を取得
+        '''
+        res = self.ses.get(f'https://live2.nicovideo.jp/api/v2/programs/{lvid}/operation/events')
+        res.raise_for_status()
+        events = json.loads(res.content)
+        # events['data']は次のような形式のオブジェクトの配列
+        # {'elapsedMillisecond': 6108, 'type': 'trialWatchState', 'commentMode': 'transparent', 'enabled': False}
+        # typeがtrialWatchStateのオブジェクトを参照するとチラ見せ設定の有無と設定された時間が分かる
+        trialWatchStates = list(filter(lambda e: e['type'] == 'trialWatchState', events['data']))
+        print(trialWatchStates)
+        if all([x['enabled'] for x in trialWatchStates]):
+            return {'availability': 'all'}
+        elif not any([x['enabled'] for x in trialWatchStates]):
+            return {'availability': 'no'}
+        else:
+            return {'availability': 'partial'}

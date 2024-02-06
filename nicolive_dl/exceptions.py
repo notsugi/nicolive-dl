@@ -6,3 +6,6 @@ class LoginError(Exception):
 
 class SelectException(Exception):
     pass
+
+class LiveUnavailableException(Exception):
+    pass
