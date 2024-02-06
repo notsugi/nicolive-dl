@@ -37,9 +37,10 @@ class NicoLiveDL:
                 "device_name": "nicolivedl",
             }
             otp_url = res.url
-            res2 = self.ses.post(otp_url, data=payload2)
-            if res2.url != "https://account.nicovideo.jp/my/account":
-                raise LoginError("Failed to Login")
+            res = self.ses.post(otp_url, data=payload2)
+        
+        if res.url != "https://account.nicovideo.jp/my/account":
+            raise LoginError("Failed to Login")
 
     async def download(self, lvid, output="{title}-{lvid}.ts", save_comments=False):
         if lvid.startswith(LIVE_URL_PREFIX):
@@ -80,6 +81,43 @@ class NicoLiveDL:
             raise SelectException("Not Found #embedded-data")
         embedded_data = embedded_tag.get_attribute_list("data-props")[0]
         decoded_data = json.loads(unquote(embedded_data))
+        await self.availability_check(decoded_data)
         web_socket_url = decoded_data["site"]["relive"]["webSocketUrl"]
         title = decoded_data["program"]["title"]
         return NicoLiveInfo(lvid, title, web_socket_url)
+
+    async def availability_check(self, decoded_data):
+        '''
+        視聴可能性のチェック
+        '''
+        lvid = decoded_data['program']['nicoliveProgramId']
+        if decoded_data['userProgramWatch']['canWatch'] == False:
+            reason = decoded_data['userProgramWatch']['rejectedReasons']
+            raise LiveUnavailableException('Live {} is unavailable. Reason: {}'.format(lvid, reason))
+        
+        if decoded_data['user']['isTrialWatchTarget'] == True:
+            # not chennel member
+            tiralWatchInfo = await self.get_tiralWatch_info(lvid)
+            if tiralWatchInfo['availability'] == 'no':
+                raise LiveUnavailableException('Live {} is unavailable. Reason: {}'.format(lvid, 'payment needed'))
+            if tiralWatchInfo['availability'] == 'partial':
+                print('\033[31m'+f'[*] Live {lvid} has trial watch part. Download may be incomplete on your account'+'\033[0m')
+    
+    async def get_tiralWatch_info(self, lvid):
+        '''
+        チラ見せの設定を取得
+        '''
+        res = self.ses.get(f'https://live2.nicovideo.jp/api/v2/programs/{lvid}/operation/events')
+        res.raise_for_status()
+        events = json.loads(res.content)
+        # events['data']は次のような形式のオブジェクトの配列
+        # {'elapsedMillisecond': 6108, 'type': 'trialWatchState', 'commentMode': 'transparent', 'enabled': False}
+        # typeがtrialWatchStateのオブジェクトを参照するとチラ見せ設定の有無と設定された時間が分かる
+        trialWatchStates = list(filter(lambda e: e['type'] == 'trialWatchState', events['data']))
+        # print(trialWatchStates)
+        if all([x['enabled'] for x in trialWatchStates]):
+            return {'availability': 'all'}
+        elif not any([x['enabled'] for x in trialWatchStates]):
+            return {'availability': 'no'}
+        else:
+            return {'availability': 'partial'}
