@@ -42,10 +42,13 @@ class NicoLiveDL:
         if res.url != "https://account.nicovideo.jp/my/account":
             raise LoginError("Failed to Login")
 
-    async def download(self, lvid, output="{title}-{lvid}.ts", save_comments=False):
+    def download(self, lvid, output="{title}-{lvid}.ts", save_comments=False):
+        asyncio.run(self._download(lvid, output, save_comments))
+
+    async def _download(self, lvid, output, save_comments):
         if lvid.startswith(LIVE_URL_PREFIX):
             lvid = lvid[len(LIVE_URL_PREFIX) :]
-        lvid, title, web_socket_url = await self.get_info(lvid)
+        lvid, title, web_socket_url = self.get_info(lvid)
         title = sanitize(title)
         output_path = Path(output.format(title=title, lvid=lvid))
 
@@ -72,7 +75,7 @@ class NicoLiveDL:
         await proc.communicate()
         await nlws.close()
 
-    async def get_info(self, lvid):
+    def get_info(self, lvid):
         res = self.ses.get(f"{LIVE_URL_PREFIX}{lvid}")
         res.raise_for_status()
         soup = BeautifulSoup(res.content, "html.parser")
@@ -81,12 +84,12 @@ class NicoLiveDL:
             raise SelectException("Not Found #embedded-data")
         embedded_data = embedded_tag.get_attribute_list("data-props")[0]
         decoded_data = json.loads(unquote(embedded_data))
-        await self.availability_check(decoded_data)
+        self.availability_check(decoded_data)
         web_socket_url = decoded_data["site"]["relive"]["webSocketUrl"]
         title = decoded_data["program"]["title"]
         return NicoLiveInfo(lvid, title, web_socket_url)
 
-    async def availability_check(self, decoded_data):
+    def availability_check(self, decoded_data):
         '''
         視聴可能性のチェック
         '''
@@ -97,13 +100,13 @@ class NicoLiveDL:
         
         if decoded_data['user']['isTrialWatchTarget'] == True:
             # not chennel member
-            tiralWatchInfo = await self.get_tiralWatch_info(lvid)
+            tiralWatchInfo = self.get_tiralWatch_info(lvid)
             if tiralWatchInfo['availability'] == 'no':
                 raise LiveUnavailableException('Live {} is unavailable. Reason: {}'.format(lvid, 'payment needed'))
             if tiralWatchInfo['availability'] == 'partial':
                 print('\033[31m'+f'[*] Live {lvid} has trial watch part. Download may be incomplete on your account'+'\033[0m')
     
-    async def get_tiralWatch_info(self, lvid):
+    def get_tiralWatch_info(self, lvid):
         '''
         チラ見せの設定を取得
         '''
